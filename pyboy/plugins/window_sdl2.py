@@ -11,6 +11,39 @@ import sdl2.ext
 from pyboy.plugins.base_plugin import PyBoyWindowPlugin
 from pyboy.utils import WindowEvent, WindowEventMouse
 
+import numpy as np
+
+from waveshare_epd import epd2in9
+from PIL import Image,ImageDraw,ImageFont
+import _thread
+from threading import Lock
+
+epd = epd2in9.EPD()
+buf = None
+
+tick_counter = 0
+
+Himage = Image.new('RGB', (296, 128), 255)  # 255: clear the frame
+
+mutex = Lock()
+
+def display_eink():
+    global mutex, epd, buf
+    Himage = Image.new('RGB', (296, 128), (255, 255, 255))  # 255: clear the frame
+    Himage.paste(Image.fromarray(buf), box=(60, -8))
+    Vimage = Himage.transpose(Image.ROTATE_90)
+    #bytesImage = Vimage.tobytes(encoder_name="raw")
+    #with open("weather.bin", "wb") as f:
+    #  f.write(bytesImage)
+    #Vimage.save("weather-v.png", "PNG")
+    EINKImage = Vimage.convert('1')
+    #EINKImage.save("weather-eink.png", "PNG")
+    mutex.acquire()
+    try:
+        epd.display(epd.getbuffer(EINKImage))
+    finally:
+        mutex.release()
+
 logger = logging.getLogger(__name__)
 
 ROWS, COLS = 144, 160
@@ -154,6 +187,13 @@ class WindowSDL2(PyBoyWindowPlugin):
         sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_GAMECONTROLLER)
         self._ftime = 0.0
 
+        global epd
+        # logging.info("init and Clear")
+        epd.init(epd.lut_full_update)
+        epd.Clear(0xFF)
+        epd.init(epd.lut_partial_update)
+        epd.Clear(0xFF)
+
         self._window = sdl2.SDL_CreateWindow(
             b"PyBoy", sdl2.SDL_WINDOWPOS_CENTERED, sdl2.SDL_WINDOWPOS_CENTERED, self._scaledresolution[0],
             self._scaledresolution[1], sdl2.SDL_WINDOW_RESIZABLE
@@ -175,6 +215,13 @@ class WindowSDL2(PyBoyWindowPlugin):
 
     def post_tick(self):
         self._update_display()
+        global tick_counter, Himage
+        # Update every 20 frames
+        if tick_counter % 20 == 0:
+            global buf
+            buf = np.asarray(self.renderer._screenbuffer)[:, :]
+            _thread.start_new_thread(display_eink, ())
+        tick_counter += 1
 
     def enabled(self):
         return self.pyboy_argv.get("window_type") == "SDL2" or self.pyboy_argv.get("window_type") is None
